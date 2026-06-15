@@ -16,14 +16,13 @@ import {
   Search,
   Check,
   Copy,
-  HelpCircle,
   Code,
   Sun,
   Moon,
   Sparkles,
   BarChart2,
-  ShieldAlert,
-  Layers
+  Layers,
+  PieChart as PieIcon
 } from 'lucide-react';
 
 type MainRoute = 'dashboard' | 'ingest' | 'dataset_overview' | 'statistics' | 'ml' | 'simulators' | 'ai_insights' | 'history' | 'cli';
@@ -41,7 +40,7 @@ const InlineAiInsights: React.FC = () => {
 
   const generatedInsights = useMemo(() => {
     const list = [];
-    if (fullData.length === 0) {
+    if (!fullData || fullData.length === 0) {
       return [
         {
           type: 'info',
@@ -102,7 +101,7 @@ const InlineAiInsights: React.FC = () => {
           type: 'success',
           title: `Optimal Categorical Group Allocation: ${firstCat}`,
           body: `Feature column "${firstCat}" presents localized grouping boundaries (${uniqueVals} classes), making it perfect for descriptive target box plots and variance analysis.`,
-          impactScore: "IDEAL RECHARTS TARGET"
+          impactScore: "IDEAL TARGET"
         });
       }
     }
@@ -126,7 +125,7 @@ const InlineAiInsights: React.FC = () => {
           <h2 className="text-2xl font-bold tracking-tight">AI Executive Diagnostic Insights</h2>
           <p className="text-xs text-slate-400 mt-0.5">Automated matrix diagnostic routines scanning your loaded data structures.</p>
         </div>
-        {fullData.length > 0 && (
+        {fullData && fullData.length > 0 && (
           <button
             onClick={triggerAnomaliesReScan}
             disabled={isProcessing}
@@ -148,14 +147,12 @@ const InlineAiInsights: React.FC = () => {
         {generatedInsights.map((insight, index) => (
           <div 
             key={index}
-            className={`p-5 rounded-xl border bg-slate-900/40 border-slate-800 flex flex-col justify-between border-l-4 ${
-              insight.type === 'success' ? 'border-l-emerald-500' : insight.type === 'warning' ? 'border-l-amber-500' : 'border-l-sky-500'
-            }`}
+            className="p-5 rounded-xl border bg-slate-900/40 border-slate-800 flex flex-col justify-between border-l-4 border-l-indigo-500"
           >
             <div className="space-y-2.5">
               <div className="flex items-start justify-between gap-3">
                 <h3 className="font-bold text-sm text-white leading-snug">{insight.title}</h3>
-                {insight.type === 'success' ? <BarChart2 className="w-4 h-4 text-emerald-500" /> : insight.type === 'warning' ? <ShieldAlert className="w-4 h-4 text-amber-500" /> : <Layers className="w-4 h-4 text-sky-500" />}
+                <Layers className="w-4 h-4 text-indigo-400" />
               </div>
               <p className="text-xs text-slate-400 leading-relaxed font-medium">{insight.body}</p>
             </div>
@@ -255,8 +252,26 @@ export function App() {
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
   const { fullData, columnMetadata, activities } = useDatasetStore();
 
-  const numericColumns = columnMetadata.filter(c => c.type === 'numeric');
+  const numericColumns = useMemo(() => columnMetadata.filter(c => c.type === 'numeric'), [columnMetadata]);
+  const categoricalColumns = useMemo(() => columnMetadata.filter(c => c.type === 'categorical' || c.type === 'string'), [columnMetadata]);
 
+  const [selectedHistCol, setSelectedHistCol] = useState<string>('');
+  const [selectedPieCol, setSelectedPieCol] = useState<string>('');
+
+  // Auto-select defaults when columns are available
+  useEffect(() => {
+    if (numericColumns.length > 0 && !selectedHistCol) {
+      setSelectedHistCol(numericColumns[0].name);
+    }
+  }, [numericColumns, selectedHistCol]);
+
+  useEffect(() => {
+    if (categoricalColumns.length > 0 && !selectedPieCol) {
+      setSelectedPieCol(categoricalColumns[0].name);
+    }
+  }, [categoricalColumns, selectedPieCol]);
+
+  // Sync class identifiers to HTML root node
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
@@ -264,6 +279,73 @@ export function App() {
       document.documentElement.classList.remove('dark');
     }
   }, [isDarkMode]);
+
+  // 1. COMPUTED HISTOGRAM RECTANGLES MAPPING (SVG Based)
+  const histogramBins = useMemo(() => {
+    if (!fullData || fullData.length === 0 || !selectedHistCol) return [];
+    const values = fullData.map(d => Number(d[selectedHistCol])).filter(v => !isNaN(v));
+    if (values.length === 0) return [];
+
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const binCount = 8;
+    const range = max - min;
+    const step = range === 0 ? 1 : range / binCount;
+
+    const bins = Array.from({ length: binCount }, (_, i) => ({
+      x0: min + i * step,
+      x1: min + (i + 1) * step,
+      count: 0
+    }));
+
+    values.forEach(v => {
+      let idx = Math.floor((v - min) / step);
+      if (idx >= binCount) idx = binCount - 1;
+      if (idx >= 0 && bins[idx]) bins[idx].count++;
+    });
+
+    return bins;
+  }, [fullData, selectedHistCol]);
+
+  // 2. COMPUTED PIE CHART SECTORS MAPPING (SVG Coordinates Based)
+  const pieSectors = useMemo(() => {
+    if (!fullData || fullData.length === 0 || !selectedPieCol) return [];
+    const counts: Record<string, number> = {};
+    
+    fullData.forEach(row => {
+      const val = String(row[selectedPieCol] ?? 'Missing/NaN');
+      counts[val] = (counts[val] || 0) + 1;
+    });
+
+    const total = fullData.length;
+    let accumulatedAngle = 0;
+    const colors = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#8b5cf6', '#64748b'];
+
+    return Object.entries(counts).map(([label, count], index) => {
+      const percentage = (count / total) * 100;
+      const angle = (count / total) * 360;
+      
+      // Calculate start and end coordinates on circumference
+      const xStart = Math.cos((accumulatedAngle - 90) * Math.PI / 180);
+      const yStart = Math.sin((accumulatedAngle - 90) * Math.PI / 180);
+      accumulatedAngle += angle;
+      const xEnd = Math.cos((accumulatedAngle - 90) * Math.PI / 180);
+      const yEnd = Math.sin((accumulatedAngle - 90) * Math.PI / 180);
+
+      return {
+        label,
+        count,
+        percentage,
+        angle,
+        xStart,
+        yStart,
+        xEnd,
+        yEnd,
+        largeArcFlag: angle > 180 ? 1 : 0,
+        color: colors[index % colors.length]
+      };
+    });
+  }, [fullData, selectedPieCol]);
 
   return (
     <div className={`flex h-screen w-screen font-sans overflow-hidden transition-colors duration-200 ${isDarkMode ? 'bg-[#0b0f19] text-slate-100' : 'bg-[#f8fafc] text-slate-800'}`}>
@@ -292,6 +374,12 @@ export function App() {
               >
                 <UploadCloud className="w-4 h-4" /> Data Upload
               </button>
+              <button 
+                onClick={() => setCurrentRoute('dashboard')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentRoute === 'dashboard' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/40 text-slate-400'}`}
+              >
+                <BarChart2 className="w-4 h-4" /> Global Dashboard
+              </button>
             </nav>
           </div>
 
@@ -304,7 +392,7 @@ export function App() {
                 onClick={() => setCurrentRoute('statistics')}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentRoute === 'statistics' ? 'bg-indigo-600 text-white shadow-sm' : 'hover:bg-slate-800/40 text-slate-400'}`}
               >
-                <BarChart3 className="w-4 h-4" /> Statistics
+                <Binary className="w-4 h-4" /> Statistics Engine
               </button>
               <button 
                 onClick={() => setCurrentRoute('ml')}
@@ -316,7 +404,7 @@ export function App() {
                 onClick={() => setCurrentRoute('simulators')}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentRoute === 'simulators' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/40 text-slate-400'}`}
               >
-                <Binary className="w-4 h-4" /> Visualizations
+                <Layers className="w-4 h-4" /> Visualizations
               </button>
             </nav>
           </div>
@@ -328,13 +416,13 @@ export function App() {
             <nav className="px-3 space-y-0.5">
               <button 
                 onClick={() => setCurrentRoute('ai_insights')}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentRoute === 'ai_insights' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/40 text-slate-400'}`}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentRoute === 'ai_insights' ? 'bg-slate-800 text-white shadow-sm' : 'hover:bg-slate-800/40 text-slate-400'}`}
               >
                 <BrainCircuit className="w-4 h-4" /> AI Insights
               </button>
               <button 
                 onClick={() => setCurrentRoute('cli')}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentRoute === 'cli' ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/40 text-slate-400'}`}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentRoute === 'cli' ? 'bg-slate-800 text-white shadow-sm' : 'hover:bg-slate-800/40 text-slate-400'}`}
               >
                 <Terminal className="w-4 h-4" /> CLI Guide
               </button>
@@ -367,7 +455,7 @@ export function App() {
           </button>
 
           <a 
-            href="https://github.com/SumanthPidishetti/DataToolkit" target="_blank" rel="noopener noreferrer"
+            href="https://github.com" target="_blank" rel="noopener noreferrer"
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition-colors uppercase tracking-wider ${
               isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-white' : 'bg-slate-900 hover:bg-slate-800 text-white'
             }`}
@@ -375,7 +463,7 @@ export function App() {
             <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
               <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
             </svg>
-            <span>User Guide</span>
+            <span>GitHub</span>
           </a>
         </header>
 
@@ -388,16 +476,19 @@ export function App() {
           {currentRoute === 'ai_insights' && <InlineAiInsights />}
           {currentRoute === 'cli' && <InlineCliGuide />}
 
+          {/* SHARED DISTRIBUTION DASHBOARD WITH HISTOGRAM AND PIE PLOTS */}
           {currentRoute === 'dashboard' && (
             <div className="space-y-6 max-w-6xl mx-auto">
               <div>
                 <h2 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Workspace Executive Summary</h2>
                 <p className="text-xs text-slate-500 mt-0.5">Real-time summary metric snapshots of current application parameters.</p>
               </div>
+
+              {/* Top Stats Cards Summary Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40">
                   <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Parsed Observations</div>
-                  <div className="text-2xl font-bold mt-1 text-white">{fullData.length} Rows</div>
+                  <div className="text-2xl font-bold mt-1 text-white">{fullData ? fullData.length : 0} Rows</div>
                 </div>
                 <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40">
                   <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Identified Numeric Features</div>
@@ -408,6 +499,120 @@ export function App() {
                   <div className="text-2xl font-bold text-emerald-400 mt-1">{activities ? activities.length : 0} Computations</div>
                 </div>
               </div>
+
+              {/* Charts Rendering Layout Node */}
+              {fullData && fullData.length > 0 ? (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  
+                  {/* INLINE HISTOGRAM VISUALIZATION */}
+                  <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <BarChart2 className="w-4 h-4 text-indigo-400" />
+                        <h3 className="text-sm font-bold text-white uppercase tracking-wide">Continuous Distribution Histogram</h3>
+                      </div>
+                      <select 
+                        value={selectedHistCol} 
+                        onChange={(e) => setSelectedHistCol(e.target.value)}
+                        className="bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded px-2 py-1 focus:outline-none"
+                      >
+                        {numericColumns.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="h-64 w-full bg-slate-950 rounded-lg p-4 relative flex items-end justify-between gap-1 border border-slate-900">
+                      {histogramBins.length > 0 ? (
+                        (() => {
+                          const maxCount = Math.max(...histogramBins.map(b => b.count), 1);
+                          return histogramBins.map((bin, idx) => {
+                            const heightPercent = (bin.count / maxCount) * 85;
+                            return (
+                              <div key={idx} className="flex-1 flex flex-col items-center group relative h-full justify-end">
+                                <div className="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 text-white text-[10px] rounded px-1.5 py-0.5 pointer-events-none font-mono z-10 whitespace-nowrap">
+                                  [{bin.x0.toFixed(1)} - {bin.x1.toFixed(1)}]: {bin.count}
+                                  </div>
+                                <div 
+                                  className="w-full bg-indigo-500/80 hover:bg-indigo-400 rounded-t transition-all duration-300"
+                                  style={{ height: `${heightPercent}%` }}
+                                />
+                                <span className="text-[9px] font-mono text-slate-500 mt-1 truncate max-w-full">
+                                  {bin.x0.toFixed(1)}
+                                </span>
+                              </div>
+                            );
+                          });
+                        })()
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">No numeric parameters mapped</div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* INLINE CATEGORICAL PIE CHART VISUALIZATION */}
+                  <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/40 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <PieIcon className="w-4 h-4 text-emerald-400" />
+                        <h3 className="text-sm font-bold text-white uppercase tracking-wide">Categorical Distribution Pie Chart</h3>
+                      </div>
+                      <select 
+                        value={selectedPieCol} 
+                        onChange={(e) => setSelectedPieCol(e.target.value)}
+                        className="bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded px-2 py-1 focus:outline-none"
+                      >
+                        {categoricalColumns.length > 0 ? (
+                          categoricalColumns.map(c => <option key={c.name} value={c.name}>{c.name}</option>)
+                        ) : (
+                          columnMetadata.map(c => <option key={c.name} value={c.name}>{c.name}</option>)
+                        )}
+                      </select>
+                    </div>
+
+                    <div className="h-64 bg-slate-950 rounded-lg p-4 border border-slate-900 flex flex-col sm:flex-row items-center justify-center gap-6">
+                      {pieSectors.length > 0 ? (
+                        <>
+                          <div className="w-36 h-36 shrink-0 relative">
+                            <svg viewBox="-1.1 -1.1 2.2 2.2" className="w-full h-full transform -rotate-90">
+                              {pieSectors.map((sector, idx) => {
+                                if (sector.percentage >= 99.9) {
+                                  return <circle key={idx} r="1" fill={sector.color} />;
+                                }
+                                const pathDefinition = `M 0 0 L ${sector.xStart} ${sector.yStart} A 1 1 0 ${sector.largeArcFlag} 1 ${sector.xEnd} ${sector.yEnd} Z`;
+                                return <path key={idx} d={pathDefinition} fill={sector.color} className="hover:opacity-80 transition-opacity" />;
+                              })}
+                            </svg>
+                          </div>
+                          
+                          <div className="flex-1 overflow-y-auto max-h-full space-y-1.5 w-full">
+                            {pieSectors.slice(0, 6).map((sector, idx) => (
+                              <div key={idx} className="flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-2 truncate pr-2">
+                                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sector.color }} />
+                                  <span className="text-slate-300 truncate font-medium">{sector.label}</span>
+                                </div>
+                                <span className="font-mono text-slate-500 font-bold shrink-0">{sector.percentage.toFixed(1)}%</span>
+                              </div>
+                            ))}
+                            {pieSectors.length > 6 && (
+                              <div className="text-[10px] text-slate-500 font-mono text-center pt-1 border-t border-slate-900">
+                                + {pieSectors.length - 6} more rows categorical elements
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-xs text-slate-500">No categoricals identified in target arrays</div>
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+              ) : (
+                <div className="p-12 text-center rounded-xl border border-slate-800 bg-slate-900/20 space-y-2">
+                  <div className="text-slate-400 text-sm font-semibold">Workspace Buffers Unallocated</div>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">Please upload a valid CSV data matrix stream via the Data Upload module to generate full distribution histograms and pie configurations.</p>
+                </div>
+              )}
             </div>
           )}
         </main>
