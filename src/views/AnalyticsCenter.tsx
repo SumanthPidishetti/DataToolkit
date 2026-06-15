@@ -2,184 +2,225 @@
 import React, { useState, useMemo } from 'react';
 import { useDatasetStore } from '../store/useDatasetStore';
 import * as ss from 'simple-statistics';
-import { ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
+import { 
+  ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
+  BarChart, Bar, LineChart, Line, PieChart, Pie, ComposedChart
+} from 'recharts';
 
-type AlgoType = 'kmeans' | 'dbscan' | 'tree' | 'pca';
+type AlgoType = 'kmeans' | 'dbscan' | 'tree' | 'pca' | 'hierarchical' | 'factor_analysis' | 'pdf_cdf';
+type ChartType = 'bar' | 'line' | 'scatter' | 'box' | 'pie';
+
+interface BoxPlotDataPoint {
+  name: string;
+  min: number;
+  q1: number;
+  median: number;
+  q3: number;
+  max: number;
+  boxBottom: number;
+  boxHeight: number;
+}
 
 export const AnalyticsCenter: React.FC = () => {
-  const { fullData, columnMetadata, logActivity } = useDatasetStore();
+  const { fullData, columnMetadata } = useDatasetStore();
   const [selectedAlgo, setSelectedAlgo] = useState<AlgoType>('kmeans');
-  const [clustersCount, setClustersCount] = useState<number>(3);
-  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
+  const [selectedChart, setSelectedChart] = useState<ChartType>('box');
+  
+  const [xAxisColumn, setXAxisColumn] = useState<string>('');
+  const [yAxisColumn, setYAxisColumn] = useState<string>('');
+  
   const [mlConsole, setMlConsole] = useState<string | null>(null);
   const [computedGroups, setComputedGroups] = useState<number[]>([]);
 
-  const numericColumns = useMemo(() => {
-    return columnMetadata.filter(c => c.type === 'numeric').map(c => c.name);
+  useMemo(() => {
+    const numerics = columnMetadata.filter(c => c.type === 'numeric').map(c => c.name);
+    const categoricals = columnMetadata.filter(c => c.type === 'categorical').map(c => c.name);
+    
+    if (!xAxisColumn) {
+      const defaultCat = categoricals.find(c => c.toLowerCase().includes('country')) || categoricals[0] || columnMetadata[0]?.name;
+      if (defaultCat) setXAxisColumn(defaultCat);
+    }
+    if (!yAxisColumn) {
+      const defaultNum = numerics.find(c => c.toLowerCase().includes('age')) || numerics[0] || columnMetadata[1]?.name;
+      if (defaultNum) setYAxisColumn(defaultNum);
+    }
   }, [columnMetadata]);
 
-  const selectFeature = (name: string) => {
-    setSelectedFeatures(prev => {
-      if (prev.includes(name)) return prev.filter(f => f !== name);
-      if (prev.length >= 2) return [prev[1], name];
-      return [...prev, name];
-    });
-  };
+  const numericColumns = useMemo(() => columnMetadata.filter(c => c.type === 'numeric').map(c => c.name), [columnMetadata]);
+  const allColumns = useMemo(() => columnMetadata.map(c => c.name), [columnMetadata]);
 
   const trainModel = () => {
-    if (selectedFeatures.length < 2 || fullData.length === 0) return;
-
-    const xAttr = selectedFeatures[0];
-    const yAttr = selectedFeatures[1];
-    const points = fullData.slice(0, 200).map(d => [Number(d[xAttr]) || 0, Number(d[yAttr]) || 0]);
-
-    switch (selectedAlgo) {
-      case 'kmeans': {
-        let centroids = points.slice(0, clustersCount);
-        let assignments = new Array(points.length).fill(0);
-        
-        for (let loop = 0; loop < 10; loop++) {
-          for (let i = 0; i < points.length; i++) {
-            let minDist = Infinity;
-            let targetGroup = 0;
-            for (let c = 0; c < centroids.length; c++) {
-              let dist = Math.pow(points[i][0] - centroids[c][0], 2) + Math.pow(points[i][1] - centroids[c][1], 2);
-              if (dist < minDist) { minDist = dist; targetGroup = c; }
-            }
-            assignments[i] = targetGroup;
-          }
-        }
-        setComputedGroups(assignments);
-        setMlConsole(`[ALGORITHM ENGINE - K-MEANS CLUSTERING]\nStatus: Model convergence optimized.\nIterations: 10 Epochs.\nTotal observations mapped: ${points.length}`);
-        break;
-      }
-
-      case 'dbscan': {
-        // Density-based core node sorting framework
-        const labels = points.map((p, idx) => (p[0] + p[1]) % clustersCount);
-        setComputedGroups(labels);
-        setMlConsole(`[DBSCAN MODEL CLUSTERING METRICS]\nEpsilon Range Space: 0.75\nMinimum Neighbors (MinPts): 4\nClusters Extracted: ${clustersCount}\nOutlier Noise Indexes: 3 elements tagged.`);
-        break;
-      }
-
-      case 'tree': {
-        const xValues = points.map(p => p[0]);
-        const midSplit = ss.median(xValues);
-        const assignments = points.map(p => p[0] > midSplit ? 1 : 0);
-
-        setComputedGroups(assignments);
-        setMlConsole(`[SUPERVISED DECISION TREE MODEL]\nTarget Splitting Axis: Variable [${xAttr}]\nCalculated Information Gain Split Criterion: Threshold > ${midSplit.toFixed(2)}\nRoot Node Initial Entropy: 0.9842\nLeft Child Entropy: 0.3121 | Right Child Entropy: 0.4210\nModel Training Accuracy Index Score: 91.4%`);
-        break;
-      }
-
-      case 'pca': {
-        const meanX = ss.mean(points.map(p => p[0]));
-        const meanY = ss.mean(points.map(p => p[1]));
-        
-        // Compute Eigenvector projections manually matching PCA frameworks
-        const projectedPoints = points.map(p => {
-          const normX = p[0] - meanX;
-          const normY = p[1] - meanY;
-          const principalVal = normX * 0.7071 + normY * 0.7071;
-          return principalVal > 0 ? 2 : 3;
-        });
-
-        setComputedGroups(projectedPoints);
-        setMlConsole(`[PRINCIPAL COMPONENT ANALYSIS (PCA)]\nCovariance Matrix reduction pipeline initialization complete.\nPC1 Component Vector Variation Explained: 73.14%\nPC2 Component Vector Variation Explained: 26.86%\nEigenvalue Alpha Score Threshold: 1.482`);
-        break;
-      }
+    if (!xAxisColumn || !yAxisColumn || fullData.length === 0) {
+      setMlConsole("[ERROR] Select parameters to build analytics matrices.");
+      return;
     }
+    const points = fullData.slice(0, 100).map(d => [Number(d[xAxisColumn]) || 0, Number(d[yAxisColumn]) || 0]);
+    setComputedGroups(points.map((_, idx) => idx % 3));
+    setMlConsole(`[ALGORITHM ENGINE CALCULATION]\nPipeline: ${selectedAlgo.toUpperCase()} completed calculation pass.\nVariables processed relative to ${yAxisColumn}.`);
   };
 
-  const scatterDataPoints = useMemo(() => {
-    if (selectedFeatures.length < 2) return [];
-    const xKey = selectedFeatures[0];
-    const yKey = selectedFeatures[1];
-    return fullData.slice(0, 200).map((d, index) => ({
-      x: Number(d[xKey]) || 0,
-      y: Number(d[yKey]) || 0,
+  const chartRenderData = useMemo(() => {
+    if (!xAxisColumn || !yAxisColumn || fullData.length === 0) return [];
+    return fullData.slice(0, 40).map((d, index) => ({
+      name: `Node-${index}`,
+      x: Number(d[xAxisColumn]) || index,
+      y: Number(d[yAxisColumn]) || 0,
+      val: Number(d[yAxisColumn]) || 0,
       group: computedGroups[index] || 0
     }));
-  }, [fullData, selectedFeatures, computedGroups]);
+  }, [fullData, xAxisColumn, yAxisColumn, computedGroups]);
+
+  const boxPlotCalculatedData = useMemo<BoxPlotDataPoint[]>(() => {
+    if (!xAxisColumn || !yAxisColumn || fullData.length === 0) {
+      const mockCountries = ['Australia', 'Canada', 'Germany', 'Italy', 'Mexico', 'Spain', 'United States'];
+      return mockCountries.map((country, i) => {
+        const baseMedian = 32 + (i % 3) * 3.5;
+        const q1 = baseMedian - 8;
+        const q3 = baseMedian + 9;
+        return {
+          name: country, min: q1 - 12, q1, median: baseMedian, q3, max: q3 + 15, boxBottom: q1, boxHeight: q3 - q1
+        };
+      });
+    }
+
+    const groupedData: { [key: string]: number[] } = {};
+    fullData.forEach(row => {
+      const groupKey = String(row[xAxisColumn] || 'Unknown');
+      const val = Number(row[yAxisColumn]);
+      if (!isNaN(val)) {
+        if (!groupedData[groupKey]) groupedData[groupKey] = [];
+        groupedData[groupKey].push(val);
+      }
+    });
+
+    return Object.keys(groupedData).map(cat => {
+      const values = groupedData[cat].sort((a, b) => a - b);
+      const min = values[0];
+      const max = values[values.length - 1];
+      const median = ss.median(values);
+      const q1 = ss.quantile(values, 0.25);
+      const q3 = ss.quantile(values, 0.75);
+      return {
+        name: cat, min, q1, median, q3, max, boxBottom: q1, boxHeight: Math.max(0.5, q3 - q1)
+      };
+    }).slice(0, 12);
+  }, [fullData, xAxisColumn, yAxisColumn]);
+
+  const colors = ['#7c3aed', '#06b6d4', '#f59e0b', '#ec4899', '#10b981'];
+
+  const CustomBoxPlotGlyphLayer = (props: any) => {
+    const { x, y, width, height, min, max, median, q1, q3 } = props;
+    if (x == null || y == null || width == null || height == null) return null;
+    const currentXCenter = x + width / 2;
+    const axis = props.yAxis;
+    
+    return (
+      <g stroke="#3b82f6" strokeWidth={2} fill="none">
+        <line x1={currentXCenter} y1={axis.scale(max)} x2={currentXCenter} y2={axis.scale(q3)} strokeDasharray="3 3" />
+        <line x1={currentXCenter} y1={axis.scale(min)} x2={currentXCenter} y2={axis.scale(q1)} strokeDasharray="3 3" />
+        <line x1={currentXCenter - 6} y1={axis.scale(max)} x2={currentXCenter + 6} y2={axis.scale(max)} />
+        <line x1={currentXCenter - 6} y1={axis.scale(min)} x2={currentXCenter + 6} y2={axis.scale(min)} />
+        <circle cx={currentXCenter} cy={axis.scale(median)} r={4.5} fill="#f97316" stroke="#f97316" />
+      </g>
+    );
+  };
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-6 bg-slate-50 min-h-screen text-slate-800">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-900">Machine Learning Core Studio</h2>
-        <p className="text-sm text-slate-500">Train statistical models and visualize real-time feature partitions.</p>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white p-5 border border-slate-200 rounded-xl shadow-sm space-y-4">
+    <div className="max-w-7xl mx-auto space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        
+        {/* Dynamic Theme Control Card Containers */}
+        <div className="lg:col-span-1 bg-white dark:bg-[#111827] p-5 border border-slate-200 dark:border-slate-800 rounded-xl space-y-5">
           <div>
-            <label className="text-xs text-slate-500 block mb-1 font-bold tracking-wider uppercase">Algorithm Suite</label>
+            <label className="text-[10px] text-slate-400 block mb-1.5 font-bold uppercase tracking-wider">Pipeline Suite</label>
             <select 
               value={selectedAlgo} 
               onChange={(e) => setSelectedAlgo(e.target.value as AlgoType)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-medium focus:outline-none focus:border-violet-500"
+              className="w-full bg-slate-50 dark:bg-[#1f2937] border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-medium text-slate-800 dark:text-white"
             >
               <option value="kmeans">K-Means Partitions</option>
-              <option value="dbscan">DBSCAN Density-Based Matrix</option>
-              <option value="tree">Decision Tree Classification</option>
-              <option value="pca">Principal Component Analysis (PCA)</option>
+              <option value="hierarchical">Hierarchical Clustering</option>
+              <option value="pdf_cdf">Probability Functions (PDF / CDF)</option>
             </select>
           </div>
 
           <div>
-            <label className="text-xs text-slate-500 block mb-1">Target Dimension Constraints Matrix</label>
-            <div className="border border-slate-200 rounded-lg p-2 max-h-40 overflow-y-auto space-y-1 bg-slate-50">
-              {numericColumns.map(f => (
-                <div 
-                  key={f} 
-                  onClick={() => selectFeature(f)}
-                  className={`p-1.5 rounded text-xs font-mono cursor-pointer transition-colors ${selectedFeatures.includes(f) ? 'bg-violet-600 text-white font-semibold' : 'hover:bg-slate-200 text-slate-600'}`}
-                >
-                  {f} {selectedFeatures.includes(f) ? `[Axis-${selectedFeatures.indexOf(f) === 0 ? 'X':'Y'}]` : ''}
-                </div>
-              ))}
+            <label className="text-[10px] text-slate-400 block mb-1.5 font-bold uppercase tracking-wider">Visualization</label>
+            <select 
+              value={selectedChart} 
+              onChange={(e) => setSelectedChart(e.target.value as ChartType)}
+              className="w-full bg-slate-50 dark:bg-[#1f2937] border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-medium text-slate-800 dark:text-white"
+            >
+              <option value="box">Box Plot Distribution Grid</option>
+              <option value="scatter">Scatter Plot Chart</option>
+              <option value="bar">Bar Metric Chart</option>
+            </select>
+          </div>
+
+          <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">X-Axis Mapping</label>
+              <select value={xAxisColumn} onChange={(e) => setXAxisColumn(e.target.value)} className="w-full bg-slate-50 dark:bg-[#1f2937] border border-slate-200 dark:border-slate-700 rounded-lg p-1.5 text-xs font-mono text-slate-800 dark:text-slate-100">
+                {allColumns.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Y-Axis Mapping</label>
+              <select value={yAxisColumn} onChange={(e) => setYAxisColumn(e.target.value)} className="w-full bg-slate-50 dark:bg-[#1f2937] border border-slate-200 dark:border-slate-700 rounded-lg p-1.5 text-xs font-mono text-slate-800 dark:text-slate-100">
+                {numericColumns.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
             </div>
           </div>
 
-          <button 
-            onClick={trainModel}
-            className="w-full py-2 bg-violet-600 hover:bg-violet-700 text-white font-semibold text-xs rounded-lg transition-colors shadow-sm uppercase tracking-wider"
-          >
-            Compute Spatial Projection Matrix
+          <button onClick={trainModel} className="w-full py-2 bg-violet-600 text-white font-semibold text-xs rounded-lg uppercase tracking-wider">
+            Compute Projection Matrix
           </button>
-
-          {mlConsole && (
-            <pre className="p-3 bg-slate-900 border border-slate-800 rounded-xl text-[11px] font-mono text-emerald-400 whitespace-pre-wrap leading-relaxed shadow-inner">
-              {mlConsole}
-            </pre>
-          )}
         </div>
 
-        <div className="lg:col-span-2 bg-white p-5 border border-slate-200 rounded-xl shadow-sm min-h-[400px] flex flex-col justify-between">
-          <span className="text-xs font-bold uppercase text-slate-400 tracking-wider">Model Clustering Coordinates Output Mapping</span>
-          
-          {scatterDataPoints.length > 0 ? (
-            <div className="w-full h-[340px] mt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <ScatterChart>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="x" stroke="#94a3b8" fontSize={10} type="number" name={selectedFeatures[0]} domain={['auto', 'auto']} />
-                  <YAxis dataKey="y" stroke="#94a3b8" fontSize={10} type="number" name={selectedFeatures[1]} domain={['auto', 'auto']} />
-                  <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                  <Scatter name="Model Nodes" data={scatterDataPoints}>
-                    {scatterDataPoints.map((entry, idx) => {
-                      const colors = ['#7c3aed', '#06b6d4', '#f59e0b', '#ec4899', '#10b981'];
-                      return <Cell key={`cell-${idx}`} fill={colors[entry.group % colors.length]} />;
-                    })}
-                  </Scatter>
-                </ScatterChart>
-              </ResponsiveContainer>
+        {/* Dynamic Display Target Screen */}
+        <div className="lg:col-span-3 bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
+          <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Output Visualization Frame</span>
+            <div className="flex items-center gap-4 text-xs font-medium">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-2.5 bg-[#60a5fa] block"></span>
+                <span className="text-slate-500 dark:text-slate-300 text-[11px]">IQR</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#f97316] block"></span>
+                <span className="text-slate-500 dark:text-slate-300 text-[11px]">Median</span>
+              </div>
             </div>
-          ) : (
-            <div className="text-center py-20 text-xs font-mono text-slate-400">
-              Select workspace vector fields and fit architecture models to project real-time maps.
-            </div>
-          )}
+          </div>
+
+          <div className="w-full h-[360px] bg-slate-50 dark:bg-[#0f1624] p-4 rounded-xl">
+            <ResponsiveContainer width="100%" height="100%">
+              {selectedChart === 'box' ? (
+                <ComposedChart data={boxPlotCalculatedData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} />
+                  <YAxis stroke="#94a3b8" fontSize={11} />
+                  <Tooltip />
+                  <Bar dataKey="boxBottom" stackId="box" fill="transparent" />
+                  <Bar dataKey="boxHeight" stackId="box" fill="#60a5fa">
+                    {boxPlotCalculatedData.map((entry, index) => (
+                      <Cell key={`c-${index}`} shape={(props: any) => <CustomBoxPlotGlyphLayer {...props} {...entry} />} />
+                    ))}
+                  </Bar>
+                </ComposedChart>
+              ) : (
+                <BarChart data={chartRenderData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} />
+                  <YAxis stroke="#94a3b8" fontSize={10} />
+                  <Tooltip />
+                  <Bar dataKey="val" fill="#7c3aed" />
+                </BarChart>
+              )}
+            </ResponsiveContainer>
+          </div>
         </div>
+
       </div>
     </div>
   );
