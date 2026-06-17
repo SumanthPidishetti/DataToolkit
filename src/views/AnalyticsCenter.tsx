@@ -4,7 +4,7 @@ import { useDatasetStore } from '../store/useDatasetStore';
 import * as ss from 'simple-statistics';
 import { 
   ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
-  BarChart, Bar, LineChart, Line, PieChart, Pie, AreaChart, Area
+  BarChart, Bar, LineChart, Line, PieChart, Pie
 } from 'recharts';
 
 type AlgoType = 'kmeans' | 'dbscan' | 'tree' | 'pca' | 'hierarchical' | 'factor_analysis' | 'pdf_cdf';
@@ -92,11 +92,62 @@ export const AnalyticsCenter: React.FC = () => {
         name: `Node-${index}`,
         x: xVal,
         y: yVal,
-        val: yVal, // helper for bar/line charts
+        val: yVal,
         group: computedGroups[index] || 0
       };
     });
   }, [fullData, xAxisColumn, yAxisColumn, computedGroups]);
+
+  // Generates flat box plot properties explicitly filtered by the chosen X and Y variables
+  const boxPlotData = useMemo(() => {
+    if (!fullData || fullData.length === 0) return [];
+
+    // Filter down to show only the selected parameters dynamically
+    const selectedColumns = [xAxisColumn, yAxisColumn].filter(Boolean);
+
+    return selectedColumns.map(colName => {
+      const targetValues = fullData
+        .map(d => Number(d[colName]))
+        .filter(v => !isNaN(v) && v !== null && v !== undefined)
+        .sort((a, b) => a - b);
+
+      if (targetValues.length === 0) {
+        return {
+          name: colName,
+          min: 0,
+          bottomWhisker: 0,
+          bottomBox: 0,
+          topBox: 0,
+          topWhisker: 0,
+          actualMin: 0,
+          actualQ1: 0,
+          actualMedian: 0,
+          actualQ3: 0,
+          actualMax: 0
+        };
+      }
+
+      const min = ss.min(targetValues);
+      const max = ss.max(targetValues);
+      const q1 = ss.quantile(targetValues, 0.25);
+      const median = ss.median(targetValues);
+      const q3 = ss.quantile(targetValues, 0.75);
+
+      return {
+        name: colName,
+        min: min,
+        bottomWhisker: q1 - min,         
+        bottomBox: median - q1,          
+        topBox: q3 - median,             
+        topWhisker: max - q3,            
+        actualMin: min,
+        actualQ1: q1,
+        actualMedian: median,
+        actualQ3: q3,
+        actualMax: max
+      };
+    });
+  }, [fullData, xAxisColumn, yAxisColumn]);
 
   const colors = ['#7c3aed', '#06b6d4', '#f59e0b', '#ec4899', '#10b981'];
 
@@ -141,7 +192,6 @@ export const AnalyticsCenter: React.FC = () => {
             </select>
           </div>
 
-          {/* Explicit Independent X & Dependent Y Selection Controls */}
           <div className="space-y-3 pt-2 border-t border-slate-100">
             <div>
               <label className="text-xs font-semibold text-slate-600 block mb-1">Independent Variable (X-Axis Mapping)</label>
@@ -187,7 +237,7 @@ export const AnalyticsCenter: React.FC = () => {
             Model Matrix Analytics Workspace Coordinates Output Map
           </span>
           
-          {chartRenderData.length > 0 ? (
+          {fullData.length > 0 ? (
             <div className="w-full h-[360px] mt-4">
               <ResponsiveContainer width="100%" height="100%">
                 {selectedChart === 'scatter' ? (
@@ -232,14 +282,26 @@ export const AnalyticsCenter: React.FC = () => {
                     <Tooltip />
                   </PieChart>
                 ) : (
-                  /* Box plot configuration emulated visually over area boundary distributions */
-                  <AreaChart data={chartRenderData}>
+                  /* Dynamically rendering selected variables side-by-side */
+                  <BarChart data={boxPlotData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={9} />
-                    <YAxis stroke="#94a3b8" fontSize={10} />
-                    <Tooltip />
-                    <Area type="monotone" dataKey="y" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.2} name="Quantile Deviation Spread" />
-                  </AreaChart>
+                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} />
+                    <YAxis stroke="#94a3b8" fontSize={10} domain={['auto', 'auto']} />
+                    <Tooltip 
+                      formatter={(_value, _name, props) => {
+                        const { actualMin, actualQ1, actualMedian, actualQ3, actualMax } = props.payload;
+                        return [
+                          `Max: ${actualMax} | Q3: ${actualQ3} | Med: ${actualMedian} | Q1: ${actualQ1} | Min: ${actualMin}`,
+                          'Quantiles Summary'
+                        ];
+                      }}
+                    />
+                    <Bar dataKey="min" stackId="boxPlot" fill="transparent" />
+                    <Bar dataKey="bottomWhisker" stackId="boxPlot" fill="#cbd5e1" maxBarSize={4} />
+                    <Bar dataKey="bottomBox" stackId="boxPlot" fill="#cbd5e1" stroke="#94a3b8" strokeWidth={1} maxBarSize={32} />
+                    <Bar dataKey="topBox" stackId="boxPlot" fill="#94a3b8" stroke="#64748b" strokeWidth={1} maxBarSize={32} />
+                    <Bar dataKey="topWhisker" stackId="boxPlot" fill="#cbd5e1" maxBarSize={4} />
+                  </BarChart>
                 )}
               </ResponsiveContainer>
             </div>
